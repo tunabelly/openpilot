@@ -181,7 +181,7 @@ class CarInterface(object):
       ret.mass = 5743 * CV.LB_TO_KG + std_cargo
       ret.safetyModel = car.CarParams.SafetyModels.gm
       ret.wheelbase = 2.946
-      ret.steerRatio = 17.75  #end to end is 13.46
+      ret.steerRatio = 17.3  # from https://media.gm.com/media/us/en/gmc/spec-tables/2016/16-yukon-specs.html (same for 2017 as well)
       ret.steerRatioRear = 0.
       ret.centerToFront = ret.wheelbase * 0.4
       ret.syncID = 384 # (ASCMLKASteeringCmd)
