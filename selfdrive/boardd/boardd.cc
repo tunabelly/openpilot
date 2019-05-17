@@ -261,7 +261,6 @@ bool can_recv(void *s, uint64_t locked_wake_time, bool force_send) {
     big_data[(big_index + i)*4+2] = data[i*4+2];
     big_data[(big_index + i)*4+3] = data[i*4+3];
     big_recv += 0x10;
-
     if (data[i*4] & 4) {
       // extended
       address = data[i*4] >> 3;
@@ -274,6 +273,35 @@ bool can_recv(void *s, uint64_t locked_wake_time, bool force_send) {
   }
   if (force_send) {
     frame_sent = true;
+
+    capnp::MallocMessageBuilder msg;
+    cereal::Event::Builder event = msg.initRoot<cereal::Event>();
+    event.setLogMonoTime(nanos_since_boot());
+
+    auto can_data = event.initCan(big_recv/0x10);
+
+    // populate message
+    for (int i = 0; i<(big_recv/0x10); i++) {
+      if (big_data[i*4] & 4) {
+        // extended
+        can_data[i].setAddress(big_data[i*4] >> 3);
+        //printf("got extended: %x\n", big_data[i*4] >> 3);
+      } else {
+        // normal
+        can_data[i].setAddress(big_data[i*4] >> 21);
+      }
+      can_data[i].setBusTime(big_data[i*4+1] >> 16);
+      int len = big_data[i*4+1]&0xF;
+      can_data[i].setDat(kj::arrayPtr((uint8_t*)&big_data[i*4+2], len));
+      can_data[i].setSrc((big_data[i*4+1] >> 4) & 0xff);
+    }
+
+    // send to can
+    auto words = capnp::messageToFlatArray(msg);
+    auto bytes = words.asBytes();
+    zmq_send(s, bytes.begin(), bytes.size(), 0);
+    big_recv = 0;
+  }
 
   return frame_sent;
 }
