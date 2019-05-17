@@ -184,6 +184,7 @@ class CarInterface(object):
       ret.steerRatio = 17.75  #end to end is 13.46
       ret.steerRatioRear = 0.
       ret.centerToFront = ret.wheelbase * 0.4
+      ret.syncID = 384
 
     # hardcoding honda civic 2016 touring params so they can be used to
     # scale unknown params for other cars
