@@ -67,6 +67,7 @@ bool pigeon_needs_init;
 
 int big_recv;
 uint32_t big_data[RECV_SIZE*2];
+uint16_t sync_id;
 
 void pigeon_init();
 void *pigeon_thread(void *crap);
@@ -94,7 +95,8 @@ void *safety_setter_thread(void *s) {
 
   auto safety_model = car_params.getSafetyModel();
   auto safety_param = car_params.getSafetyParam();
-  LOGW("setting safety model: %d with param %d", safety_model, safety_param);
+  sync_id = car_params.getSyncID();
+  LOGW("setting safety model: %d with param %d and sync id %d", safety_model, safety_param, sync_id);
 
   int safety_setting = 0;
   switch (safety_model) {
@@ -219,7 +221,7 @@ void handle_usb_issue(int err, const char func[]) {
   // TODO: check other errors, is simply retrying okay?
 }
 
-bool can_recv(void *s, bool force_send) {
+bool can_recv(void *s, uint64_t locked_wake_time, bool force_send) {
   int err;
   uint32_t data[RECV_SIZE/4];
   int recv, big_index;
@@ -231,6 +233,11 @@ bool can_recv(void *s, bool force_send) {
   // do recv
   pthread_mutex_lock(&usb_lock);
 
+  cur_time = 1e-3 * nanos_since_boot();
+  if (locked_wake_time > cur_time) {
+    // Short sleep occurs after usb_lock to ensure sync timing
+    usleep(locked_wake_time - cur_time);
+  }
   do {
     err = libusb_bulk_transfer(dev_handle, 0x81, (uint8_t*)data, RECV_SIZE, &recv, TIMEOUT);
     if (err != 0) { handle_usb_issue(err, __func__); }
@@ -254,38 +261,19 @@ bool can_recv(void *s, bool force_send) {
     big_data[(big_index + i)*4+2] = data[i*4+2];
     big_data[(big_index + i)*4+3] = data[i*4+3];
     big_recv += 0x10;
+
+    if (data[i*4] & 4) {
+      // extended
+      address = data[i*4] >> 3;
+      //printf("got extended: %x\n", big_data[i*4] >> 3);
+    } else {
+      // normal
+      address = data[i*4] >> 21;
+    }
+    if (address == sync_id) force_send = true;
   }
   if (force_send) {
     frame_sent = true;
-
-    capnp::MallocMessageBuilder msg;
-    cereal::Event::Builder event = msg.initRoot<cereal::Event>();
-    event.setLogMonoTime(nanos_since_boot());
-
-    auto can_data = event.initCan(big_recv/0x10);
-
-    // populate message
-    for (int i = 0; i<(big_recv/0x10); i++) {
-      if (big_data[i*4] & 4) {
-        // extended
-        can_data[i].setAddress(big_data[i*4] >> 3);
-        //printf("got extended: %x\n", big_data[i*4] >> 3);
-      } else {
-        // normal
-        can_data[i].setAddress(big_data[i*4] >> 21);
-      }
-      can_data[i].setBusTime(big_data[i*4+1] >> 16);
-      int len = big_data[i*4+1]&0xF;
-      can_data[i].setDat(kj::arrayPtr((uint8_t*)&big_data[i*4+2], len));
-      can_data[i].setSrc((big_data[i*4+1] >> 4) & 0xff);
-    }
-
-    // send to can
-    auto words = capnp::messageToFlatArray(msg);
-    auto bytes = words.asBytes();
-    zmq_send(s, bytes.begin(), bytes.size(), 0);
-    big_recv = 0;
-  }
 
   return frame_sent;
 }
@@ -477,50 +465,86 @@ void *can_recv_thread(void *crap) {
   zmq_bind(publisher, "tcp://*:8006");
 
   bool frame_sent, skip_once, force_send;
-  uint64_t wake_time, cur_time, last_long_sleep;
+  uint64_t wake_time, locked_wake_time, last_long_sleep;
   int recv_state = 0;
   force_send = true;
   last_long_sleep = 1e-3 * nanos_since_boot();
   wake_time = last_long_sleep;
+  locked_wake_time = wake_time;
 
   while (!do_exit) {
+    while (sync_id > 0 && !do_exit) {
+      frame_sent = can_recv(publisher, locked_wake_time, force_send);
 
-    frame_sent = can_recv(publisher, force_send);
-
-    // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
-    if (recv_state++ < 2) {
-      last_long_sleep = 1e-3 * nanos_since_boot();
-      wake_time += 4500;
-      force_send = false;
-      if (last_long_sleep < wake_time) {
-        usleep(wake_time - last_long_sleep);
-      }
-      else {
-        if ((last_long_sleep - wake_time) > 5e5) {
-          // probably a new drive
-          wake_time = last_long_sleep;
+      // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
+      if (frame_sent == true || skip_once == true) {
+        last_long_sleep = 1e-3 * nanos_since_boot();
+        skip_once = frame_sent;
+        wake_time += 4500;
+        force_send = false;
+        if (last_long_sleep < wake_time) {
+          usleep(wake_time - last_long_sleep);
         }
         else {
-          if (recv_state < 2) {
-            wake_time += 4500;
-            recv_state++;
-            if (last_long_sleep < wake_time) {
-              usleep(wake_time - last_long_sleep);
-            }
-            else {
-              printf("    lagging!\n");
+          if ((last_long_sleep - wake_time) > 5e5) {
+            // probably a new drive
+            wake_time = last_long_sleep;
+          }
+          else {
+            if (skip_once) {
+              wake_time += 4500;
+              skip_once = false;
+              if (last_long_sleep < wake_time) {
+                usleep(wake_time - last_long_sleep);
+              }
+              else {
+                printf("   lagging sync %d \n", sync_id);
+              }
             }
           }
         }
       }
+      else {
+        //force_send = (locked_wake_time > last_long_sleep);
+        wake_time += 1000;
+        locked_wake_time = wake_time;
+      }
     }
-    else {
-      force_send = true;
-      recv_state = 0;
-      wake_time += 1000;
-      cur_time = 1e-3 * nanos_since_boot();
-      if (wake_time > cur_time) {
-        usleep(wake_time - cur_time);
+    while (sync_id == 0 && !do_exit) {
+      frame_sent = can_recv(publisher, locked_wake_time, force_send);
+
+      // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
+      if (recv_state++ < 2) {
+        last_long_sleep = 1e-3 * nanos_since_boot();
+        wake_time += 4500;
+        force_send = false;
+        if (last_long_sleep < wake_time) {
+          usleep(wake_time - last_long_sleep);
+        }
+        else {
+          if ((last_long_sleep - wake_time) > 5e5) {
+            // probably a new drive
+            wake_time = last_long_sleep;
+          }
+          else {
+            if (recv_state < 2) {
+              wake_time += 4500;
+              recv_state++;
+              if (last_long_sleep < wake_time) {
+                usleep(wake_time - last_long_sleep);
+              }
+              else {
+                printf("    lagging!\n");
+              }
+            }
+          }
+        }
+      }
+      else {
+        force_send = true;
+        recv_state = 0;
+        wake_time += 1000;
+        locked_wake_time = wake_time;
       }
     }
   }
@@ -706,7 +730,7 @@ int main() {
   LOGW("starting boardd");
 
   // set process priority
-  err = set_realtime_priority(4);
+  err = set_realtime_priority(3);
   LOG("setpriority returns %d", err);
 
   // check the environment

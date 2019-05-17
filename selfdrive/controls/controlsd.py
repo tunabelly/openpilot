@@ -399,7 +399,7 @@ def controlsd_thread(gctx=None, rate=100):
   gc.disable()
 
   # start the loop
-  set_realtime_priority(3)
+  set_realtime_priority(4)
 
   context = zmq.Context()
   params = Params()
@@ -495,7 +495,9 @@ def controlsd_thread(gctx=None, rate=100):
     CS, events, cal_status, cal_perc, overtemp, free_space, low_battery, mismatch_counter, plan, path_plan =\
       data_sample(CI, CC, CS, plan_sock, path_plan_sock, thermal, cal, health, driver_monitor,
                   poller, cal_status, cal_perc, overtemp, free_space, low_battery, driver_status,
-                  state, mismatch_counter, rk, params, plan, path_plan)
+                  state, mismatch_counter, params, plan, path_plan)
+
+    rk.monitor_time()
     prof.checkpoint("Sample")
 
     path_plan_age = (start_time - path_plan.logMonoTime) / 1e9
