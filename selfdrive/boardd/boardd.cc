@@ -42,7 +42,6 @@
 #define SAFETY_HYUNDAI 7
 #define SAFETY_TESLA 8
 #define SAFETY_CHRYSLER 9
-#define SAFETY_SUBARU 10
 #define SAFETY_TOYOTA_IPAS 0x1335
 #define SAFETY_TOYOTA_NOLIMITS 0x1336
 #define SAFETY_ALLOUTPUT 0x1337
@@ -129,9 +128,6 @@ void *safety_setter_thread(void *s) {
     break;
   case (int)cereal::CarParams::SafetyModels::CHRYSLER:
     safety_setting = SAFETY_CHRYSLER;
-    break;
-  case (int)cereal::CarParams::SafetyModels::SUBARU:
-    safety_setting = SAFETY_SUBARU;
     break;
   default:
     LOGE("unknown safety model: %d", safety_model);
@@ -371,11 +367,6 @@ void can_send(void *s) {
 
   capnp::FlatArrayMessageReader cmsg(amsg);
   cereal::Event::Reader event = cmsg.getRoot<cereal::Event>();
-  if (nanos_since_boot() - event.getLogMonoTime() > 1e9) {
-    //Older than 1 second. Dont send.
-    zmq_msg_close(&msg);
-    return;
-  }
   int msg_count = event.getCan().size();
 
   uint32_t *send = (uint32_t*)malloc(msg_count*0x10);
@@ -485,98 +476,98 @@ void *can_send_thread(void *crap) {
 }
 
 void *can_recv_thread(void *crap) {
-    LOGD("start recv thread");
-    
-    // can = 8006
-    void *context = zmq_ctx_new();
-    void *publisher = zmq_socket(context, ZMQ_PUB);
-    zmq_bind(publisher, "tcp://*:8006");
-    
-    bool frame_sent, skip_once, force_send;
-    uint64_t wake_time, locked_wake_time, last_long_sleep;
-    int recv_state = 0;
-    force_send = true;
-    last_long_sleep = 1e-3 * nanos_since_boot();
-    wake_time = last_long_sleep;
-    locked_wake_time = wake_time;
-    
-    while (!do_exit) {
-        while (sync_id > 0 && !do_exit) {
-            frame_sent = can_recv(publisher, locked_wake_time, force_send);
-            
-            // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
-            if (frame_sent == true || skip_once == true) {
-                last_long_sleep = 1e-3 * nanos_since_boot();
-                skip_once = frame_sent;
-                wake_time += 4500;
-                force_send = false;
-                if (last_long_sleep < wake_time) {
-                    usleep(wake_time - last_long_sleep);
-                }
-                else {
-                    if ((last_long_sleep - wake_time) > 5e5) {
-                        // probably a new drive
-                        wake_time = last_long_sleep;
-                    }
-                    else {
-                        if (skip_once) {
-                            wake_time += 4500;
-                            skip_once = false;
-                            if (last_long_sleep < wake_time) {
-                                usleep(wake_time - last_long_sleep);
-                            }
-                            else {
-                                printf("   lagging sync %d \n", sync_id);
-                            }
-                        }
-                    }
-                }
-            }
-            else {
-                //force_send = (locked_wake_time > last_long_sleep);
-                wake_time += 1000;
-                locked_wake_time = wake_time;
-            }
+  LOGD("start recv thread");
+
+  // can = 8006
+  void *context = zmq_ctx_new();
+  void *publisher = zmq_socket(context, ZMQ_PUB);
+  zmq_bind(publisher, "tcp://*:8006");
+
+  bool frame_sent, skip_once, force_send;
+  uint64_t wake_time, locked_wake_time, last_long_sleep;
+  int recv_state = 0;
+  force_send = true;
+  last_long_sleep = 1e-3 * nanos_since_boot();
+  wake_time = last_long_sleep;
+  locked_wake_time = wake_time;
+
+  while (!do_exit) {
+    while (sync_id > 0 && !do_exit) {
+      frame_sent = can_recv(publisher, locked_wake_time, force_send);
+
+      // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
+      if (frame_sent == true || skip_once == true) {
+        last_long_sleep = 1e-3 * nanos_since_boot();
+        skip_once = frame_sent;
+        wake_time += 4500;
+        force_send = false;
+        if (last_long_sleep < wake_time) {
+          usleep(wake_time - last_long_sleep);
         }
-        while (sync_id == 0 && !do_exit) {
-            frame_sent = can_recv(publisher, locked_wake_time, force_send);
-            
-            // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
-            if (recv_state++ < 2) {
-                last_long_sleep = 1e-3 * nanos_since_boot();
-                wake_time += 4500;
-                force_send = false;
-                if (last_long_sleep < wake_time) {
-                    usleep(wake_time - last_long_sleep);
-                }
-                else {
-                    if ((last_long_sleep - wake_time) > 5e5) {
-                        // probably a new drive
-                        wake_time = last_long_sleep;
-                    }
-                    else {
-                        if (recv_state < 2) {
-                            wake_time += 4500;
-                            recv_state++;
-                            if (last_long_sleep < wake_time) {
-                                usleep(wake_time - last_long_sleep);
-                            }
-                            else {
-                                printf("    lagging!\n");
-                            }
-                        }
-                    }
-                }
+        else {
+          if ((last_long_sleep - wake_time) > 5e5) {
+            // probably a new drive
+            wake_time = last_long_sleep;
+          }
+          else {
+            if (skip_once) {
+              wake_time += 4500;
+              skip_once = false;
+              if (last_long_sleep < wake_time) {
+                usleep(wake_time - last_long_sleep);
+              }
+              else {
+                printf("   lagging sync %d \n", sync_id);
+              }
             }
-            else {
-                force_send = true;
-                recv_state = 0;
-                wake_time += 1000;
-                locked_wake_time = wake_time;
-            }
+          }
         }
+      }
+      else {
+        //force_send = (locked_wake_time > last_long_sleep);
+        wake_time += 1000;
+        locked_wake_time = wake_time;
+      }
     }
-    return NULL;
+    while (sync_id == 0 && !do_exit) {
+      frame_sent = can_recv(publisher, locked_wake_time, force_send);
+
+      // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
+      if (recv_state++ < 2) {
+        last_long_sleep = 1e-3 * nanos_since_boot();
+        wake_time += 4500;
+        force_send = false;
+        if (last_long_sleep < wake_time) {
+          usleep(wake_time - last_long_sleep);
+        }
+        else {
+          if ((last_long_sleep - wake_time) > 5e5) {
+            // probably a new drive
+            wake_time = last_long_sleep;
+          }
+          else {
+            if (recv_state < 2) {
+              wake_time += 4500;
+              recv_state++;
+              if (last_long_sleep < wake_time) {
+                usleep(wake_time - last_long_sleep);
+              }
+              else {
+                printf("    lagging!\n");
+              }
+            }
+          }
+        }
+      }
+      else {
+        force_send = true;
+        recv_state = 0;
+        wake_time += 1000;
+        locked_wake_time = wake_time;
+      }
+    }
+  }
+  return NULL;
 }
 
 void *can_health_thread(void *crap) {
