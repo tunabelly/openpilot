@@ -37,7 +37,6 @@ class CarInterface(object):
     self.CS = CarState(CP, canbus)
     self.VM = VehicleModel(CP)
     self.pt_cp = get_powertrain_can_parser(CP, canbus)
-    self.ch_cp = get_chassis_can_parser(CP, canbus)
     self.ch_cp_dbc_name = DBC[CP.carFingerprint]['chassis']
 
     # sending if read only is False
@@ -181,10 +180,9 @@ class CarInterface(object):
       ret.mass = 5743 * CV.LB_TO_KG + std_cargo
       ret.safetyModel = car.CarParams.SafetyModels.gm
       ret.wheelbase = 2.946
-      ret.steerRatio = 17.3  # from https://media.gm.com/media/us/en/gmc/spec-tables/2016/16-yukon-specs.html (same for 2017 as well)
+      ret.steerRatio = 17.75  #end to end is 13.46
       ret.steerRatioRear = 0.
       ret.centerToFront = ret.wheelbase * 0.4
-      ret.syncID = 384 # (ASCMLKASteeringCmd)
 
     # hardcoding honda civic 2016 touring params so they can be used to
     # scale unknown params for other cars
@@ -270,8 +268,7 @@ class CarInterface(object):
     # brake pedal
     ret.brake = self.CS.user_brake / 0xd0
     ret.brakePressed = self.CS.brake_pressed
-    ret.brakeLights = self.CS.frictionBrakesActive
-    
+
     # steering wheel
     ret.steeringAngle = self.CS.angle_steers
 
@@ -284,14 +281,13 @@ class CarInterface(object):
     ret.cruiseState.available = bool(self.CS.main_on)
     cruiseEnabled = self.CS.pcm_acc_status != 0
     ret.cruiseState.enabled = cruiseEnabled
-    ret.cruiseState.standstill = False
+    ret.cruiseState.standstill = self.CS.pcm_acc_status == 4
 
     ret.leftBlinker = self.CS.left_blinker_on
     ret.rightBlinker = self.CS.right_blinker_on
     ret.doorOpen = not self.CS.door_all_closed
     ret.seatbeltUnlatched = not self.CS.seatbelt
     ret.gearShifter = self.CS.gear_shifter
-    ret.readdistancelines = self.CS.follow_level
 
     buttonEvents = []
 
@@ -322,8 +318,6 @@ class CarInterface(object):
           be.type = 'accelCruise' # Suppress resume button if we're resuming from stop so we don't adjust speed.
       elif but == CruiseButtons.DECEL_SET:
         be.type = 'decelCruise'
-        if not cruiseEnabled and not self.CS.lkMode:
-          self.lkMode = True
       elif but == CruiseButtons.CANCEL:
         be.type = 'cancel'
       elif but == CruiseButtons.MAIN:
@@ -331,14 +325,6 @@ class CarInterface(object):
       buttonEvents.append(be)
 
     ret.buttonEvents = buttonEvents
-    
-    if cruiseEnabled and self.CS.lka_button and self.CS.lka_button != self.CS.prev_lka_button:
-      self.CS.lkMode = not self.CS.lkMode
-
-    if self.CS.distance_button and self.CS.distance_button != self.CS.prev_distance_button:
-       self.CS.follow_level -= 1
-       if self.CS.follow_level < 1:
-         self.CS.follow_level = 3
 
     events = []
     if not self.CS.can_valid:
@@ -347,8 +333,6 @@ class CarInterface(object):
         events.append(create_event('commIssue', [ET.NO_ENTRY, ET.IMMEDIATE_DISABLE]))
     else:
       self.can_invalid_count = 0
-    if cruiseEnabled and (self.CS.left_blinker_on or self.CS.right_blinker_on):
-       events.append(create_event('manualSteeringRequiredBlinkersOn', [ET.WARNING]))
     if self.CS.steer_error:
       events.append(create_event('steerUnavailable', [ET.NO_ENTRY, ET.IMMEDIATE_DISABLE, ET.PERMANENT]))
     if self.CS.steer_not_allowed:
@@ -385,6 +369,8 @@ class CarInterface(object):
         events.append(create_event('pedalPressed', [ET.NO_ENTRY, ET.USER_DISABLE]))
       if ret.gasPressed:
         events.append(create_event('pedalPressed', [ET.PRE_ENABLE]))
+      if ret.cruiseState.standstill:
+        events.append(create_event('resumeRequired', [ET.WARNING]))
 
       # handle button presses
       for b in ret.buttonEvents:
