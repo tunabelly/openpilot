@@ -274,6 +274,7 @@ bool can_recv(void *s, uint64_t locked_wake_time, bool force_send) {
   }
   if (force_send) {
     frame_sent = true;
+  }
 
   return frame_sent;
 }
