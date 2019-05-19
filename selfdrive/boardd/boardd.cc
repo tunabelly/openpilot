@@ -221,75 +221,64 @@ void handle_usb_issue(int err, const char func[]) {
   // TODO: check other errors, is simply retrying okay?
 }
 
-bool can_recv(void *s, bool force_send) {
-    int err;
-    uint32_t data[RECV_SIZE/4];
-    int recv, big_index;
     uint32_t f1, f2, address;
-    bool frame_sent;
-    uint64_t cur_time;
-    frame_sent = false;
+bool can_recv(void *s, uint_64t notUsed, bool force_send) {
+    LOGD("start recv thread");
     
-    // do recv
-    pthread_mutex_lock(&usb_lock);
+    // can = 8006
+    void *context = zmq_ctx_new();
+    void *publisher = zmq_socket(context, ZMQ_PUB);
+    zmq_bind(publisher, "tcp://*:8006");
     
-    do {
-        err = libusb_bulk_transfer(dev_handle, 0x81, (uint8_t*)data, RECV_SIZE, &recv, TIMEOUT);
-        if (err != 0) { handle_usb_issue(err, __func__); }
-        if (err == -8) { LOGE_100("overflow got 0x%x", recv); };
+    bool frame_sent, skip_once, force_send;
+    uint64_t wake_time, cur_time, last_long_sleep;
+    int recv_state = 0;
+    force_send = true;
+    last_long_sleep = 1e-3 * nanos_since_boot();
+    wake_time = last_long_sleep;
+    
+    while (!do_exit) {
         
-        // timeout is okay to exit, recv still happened
-        if (err == -7) { break; }
-    } while(err != 0);
-    
-    pthread_mutex_unlock(&usb_lock);
-    
-    // return if both buffers are empty
-    if ((big_recv <= 0) && (recv <= 0)) {
-        return true;
-    }
-    
-    big_index = big_recv/0x10;
-    for (int i = 0; i<(recv/0x10); i++) {
-        big_data[(big_index + i)*4] = data[i*4];
-        big_data[(big_index + i)*4+1] = data[i*4+1];
-        big_data[(big_index + i)*4+2] = data[i*4+2];
-        big_data[(big_index + i)*4+3] = data[i*4+3];
-        big_recv += 0x10;
-    }
-    if (force_send) {
-        frame_sent = true;
+        frame_sent = can_recv(publisher, force_send);
         
-        capnp::MallocMessageBuilder msg;
-        cereal::Event::Builder event = msg.initRoot<cereal::Event>();
-        event.setLogMonoTime(nanos_since_boot());
-        
-        auto can_data = event.initCan(big_recv/0x10);
-        
-        // populate message
-        for (int i = 0; i<(big_recv/0x10); i++) {
-            if (big_data[i*4] & 4) {
-                // extended
-                can_data[i].setAddress(big_data[i*4] >> 3);
-                //printf("got extended: %x\n", big_data[i*4] >> 3);
-            } else {
-                // normal
-                can_data[i].setAddress(big_data[i*4] >> 21);
+        // drain the Panda twice at 4.5ms intervals, then once at 1.0ms interval (twice max if sync_id is set)
+        if (recv_state++ < 2) {
+            last_long_sleep = 1e-3 * nanos_since_boot();
+            wake_time += 4500;
+            force_send = false;
+            if (last_long_sleep < wake_time) {
+                usleep(wake_time - last_long_sleep);
             }
-            can_data[i].setBusTime(big_data[i*4+1] >> 16);
-            int len = big_data[i*4+1]&0xF;
-            can_data[i].setDat(kj::arrayPtr((uint8_t*)&big_data[i*4+2], len));
-            can_data[i].setSrc((big_data[i*4+1] >> 4) & 0xff);
+            else {
+                if ((last_long_sleep - wake_time) > 5e5) {
+                    // probably a new drive
+                    wake_time = last_long_sleep;
+                }
+                else {
+                    if (recv_state < 2) {
+                        wake_time += 4500;
+                        recv_state++;
+                        if (last_long_sleep < wake_time) {
+                            usleep(wake_time - last_long_sleep);
+                        }
+                        else {
+                            printf("    lagging!\n");
+                        }
+                    }
+                }
+            }
         }
-        
-        // send to can
-        auto words = capnp::messageToFlatArray(msg);
-        auto bytes = words.asBytes();
-        zmq_send(s, bytes.begin(), bytes.size(), 0);
-        big_recv = 0;
+        else {
+            force_send = true;
+            recv_state = 0;
+            wake_time += 1000;
+            cur_time = 1e-3 * nanos_since_boot();
+            if (wake_time > cur_time) {
+                usleep(wake_time - cur_time);
+            }
+        }
     }
-    
-    return frame_sent;
+    return NULL;
 }
 
 void can_health(void *s) {
