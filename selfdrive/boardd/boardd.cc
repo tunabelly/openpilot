@@ -65,7 +65,7 @@ pthread_t safety_setter_thread_handle = -1;
 pthread_t pigeon_thread_handle = -1;
 bool pigeon_needs_init;
 
-int big_recv;
+int big_recv = 0;
 uint32_t big_data[RECV_SIZE*2];
 uint16_t sync_id;
 
