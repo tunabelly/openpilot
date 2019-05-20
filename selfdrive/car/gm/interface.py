@@ -177,13 +177,14 @@ class CarInterface(object):
       ret.centerToFront = ret.wheelbase * 0.465
 
     elif candidate == CAR.YUKON:
+      #specs from https://media.gm.com/media/us/en/gmc/spec-tables/2016/16-yukon-specs.html (2017 has the same specs as 2016)
       ret.minEnableSpeed = 18 * CV.KPH_TO_MS # engage speed must be 18kph or over
-      ret.mass = 5743 * CV.LB_TO_KG + std_cargo
+      ret.mass = 5784 * CV.LB_TO_KG + std_cargo # for Denali 4WD with 20" wheels
       ret.safetyModel = car.CarParams.SafetyModels.gm
       ret.wheelbase = 2.946
-      ret.steerRatio = 17.75  #end to end is 13.46
+      ret.steerRatio = 17.3
       ret.steerRatioRear = 0.
-      ret.centerToFront = ret.wheelbase * 0.4
+      ret.centerToFront = ret.wheelbase * 0.45 # a guess
 
     # hardcoding honda civic 2016 touring params so they can be used to
     # scale unknown params for other cars
