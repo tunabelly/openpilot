@@ -103,7 +103,8 @@ class CarInterface(CarInterfaceBase):
     # or camera is on powertrain bus (LKA cars without ACC).
     ret.enableCamera = is_ecu_disconnected(fingerprint[0], FINGERPRINTS, ECU_FINGERPRINT, candidate, ECU.CAM) or \
                        has_relay or \
-                       candidate == CAR.CADILLAC_CT6
+                       candidate == CAR.CADILLAC_CT6 or \
+                       candidate == CAR.YUKON
     ret.openpilotLongitudinalControl = ret.enableCamera
     tire_stiffness_factor = 0.444  # not optimized yet
     ret.safetyModelPassive = car.CarParams.SafetyModel.gmPassive
@@ -174,6 +175,16 @@ class CarInterface(CarInterfaceBase):
       ret.steerRatio = 14.6   # it's 16.3 without rear active steering
       ret.steerRatioRear = 0. # TODO: there is RAS on this car!
       ret.centerToFront = ret.wheelbase * 0.465
+      
+    elif candidate == CAR.YUKON:
+        #specs from https://media.gm.com/media/us/en/gmc/spec-tables/2016/16-yukon-specs.html (2017 has the same specs as 2016)
+        ret.minEnableSpeed = 18 * CV.KPH_TO_MS # engage speed must be 18kph or over
+        ret.mass = 5784 * CV.LB_TO_KG + STD_CARGO_KG # for Denali 4WD with 20" wheels
+        ret.safetyModel = car.CarParams.SafetyModel.gm
+        ret.wheelbase = 2.946
+        ret.steerRatio = 17.3
+        ret.steerRatioRear = 0.
+        ret.centerToFront = ret.wheelbase * 0.45 # a guess
 
 
     # TODO: get actual value, for now starting with reasonable value for
