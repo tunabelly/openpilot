@@ -111,7 +111,9 @@ static int gm_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
     // on powertrain bus.
     // 384 = ASCMLKASteeringCmd
     // 715 = ASCMGasRegenCmd
-    if ((safety_mode_cnt > RELAY_TRNS_TIMEOUT) && ((addr == 384) || (addr == 715))) {
+    // MSA, 23Aug2020 - YUKON hack since the ASCM is online, this isn't a fault
+    //if ((safety_mode_cnt > RELAY_TRNS_TIMEOUT) && ((addr == 384) || (addr == 715))) {
+    if (safety_mode_cnt > RELAY_TRNS_TIMEOUT) {
       relay_malfunction_set();
     }
   }
