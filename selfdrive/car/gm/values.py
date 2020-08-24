@@ -83,7 +83,9 @@ FINGERPRINTS = {
 STEER_THRESHOLD = 1.0
 
 ECU_FINGERPRINT = {
-  Ecu.fwdCamera: [384, 715]  # 384 = "ASCMLKASteeringCmd", 715 = "ASCMGasRegenCmd"
+  #Ecu.fwdCamera: [384, 715]  # 384 = "ASCMLKASteeringCmd", 715 = "ASCMGasRegenCmd"
+  # MSA, 24Aug2020 - Yukon
+  Ecu.fwdCamera: [384]  # 384 = "ASCMLKASteeringCmd"
 }
 
 DBC = {
