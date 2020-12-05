@@ -69,7 +69,7 @@ class CarInterface(CarInterfaceBase):
 
     # GM port is considered a community feature, since it disables AEB;
     # TODO: make a port that uses a car harness and it only intercepts the camera
-    ret.communityFeature = True
+    #ret.communityFeature = True
 
     # Presence of a camera on the object bus is ok.
     # Have to go to read_only if ASCM is online (ACC-enabled cars),
